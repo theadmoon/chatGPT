@@ -1,0 +1,41 @@
+name: L2F Full SHA Inventory Windows test
+on:
+  push:
+    branches: [l2f-quick-inventory-ci]
+  workflow_dispatch:
+jobs:
+  sha:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - name: Synthetic SHA256 and resume on Windows PowerShell 5.1
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $root=Join-Path $env:RUNNER_TEMP 'sha-source'
+          $output=Join-Path $env:RUNNER_TEMP 'sha-report'
+          $state=Join-Path $env:RUNNER_TEMP 'sha-state'
+          New-Item -ItemType Directory -Force -Path $root,$output,$state|Out-Null
+          [IO.File]::WriteAllBytes((Join-Path $root 'a.mp4'),[byte[]](1,2,3))
+          [IO.File]::WriteAllBytes((Join-Path $root 'b.yandex_disk_download'),[byte[]](4,5))
+          & powershell.exe -NoProfile -ExecutionPolicy Bypass -File sha_inventory/APP/SHA_Inventory.ps1 -Root $root -OutputDir $output -StateDir $state
+          if ($LASTEXITCODE -ne 0) { throw ('FIRST_RUN_FAIL '+$LASTEXITCODE) }
+          & powershell.exe -NoProfile -ExecutionPolicy Bypass -File sha_inventory/APP/SHA_Inventory.ps1 -Root $root -OutputDir $output -StateDir $state
+          if ($LASTEXITCODE -ne 0) { throw ('SECOND_RUN_FAIL '+$LASTEXITCODE) }
+          $report=Get-ChildItem -LiteralPath $output -Filter '*.zip' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $z=[IO.Compression.ZipFile]::OpenRead($report.FullName)
+          try {
+            $entry=$z.Entries | Where-Object { $_.Name -eq 'SUMMARY.json' } | Select-Object -First 1
+            $rd=New-Object IO.StreamReader($entry.Open())
+            try { $summary=$rd.ReadToEnd()|ConvertFrom-Json } finally {$rd.Dispose()}
+            if($summary.sha_reused -ne 2 -or $summary.sha_fresh -ne 0 -or $summary.sha_available -ne 2 -or $summary.counts.files_total -ne 2 -or $summary.counts.metadata_errors -ne 0){throw ('BAD_SUMMARY '+($summary|ConvertTo-Json))}
+          } finally {$z.Dispose()}
+          Write-Host 'FULL_SHA_WINDOWS_RESUME_PASS'
+      - name: Store evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: full-sha-synthetic
+          path: ${{runner.temp}}/sha-report/**
+          if-no-files-found: warn
