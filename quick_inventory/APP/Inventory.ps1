@@ -101,12 +101,21 @@ $report = [ordered]@{
     notes='Metadata inventory only. No content was read or modified. This is not a fingerprint scan or snapshot reconciliation.'
 }
 $report | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $work 'SUMMARY.json') -Encoding UTF8
-$lines = @('L2F Quick Inventory', 'STATUS=' + $status, 'SOURCE=' + $rootPath,
-    'FILES_TOTAL=' + $all.Count, 'VIDEOS=' + $counts.VIDEO,
-    'IMAGES=' + $counts.IMAGE, 'PARTIAL=' + $counts.PARTIAL,
-    'OTHER=' + $counts.OTHER, 'SUBDIRECTORIES=' + $dirCount,
-    'ERRORS=' + $errs.Count, 'BYTES=' + $sizeTotal,
-    'NO_SHA256_COMPUTED', 'SOURCE_READ_ONLY')
+$lines = @(
+    'L2F Quick Inventory'
+    ('STATUS=' + $status)
+    ('SOURCE=' + $rootPath)
+    ('FILES_TOTAL=' + $all.Count)
+    ('VIDEOS=' + $counts.VIDEO)
+    ('IMAGES=' + $counts.IMAGE)
+    ('PARTIAL=' + $counts.PARTIAL)
+    ('OTHER=' + $counts.OTHER)
+    ('SUBDIRECTORIES=' + $dirCount)
+    ('ERRORS=' + $errs.Count)
+    ('BYTES=' + $sizeTotal)
+    'NO_SHA256_COMPUTED'
+    'SOURCE_READ_ONLY'
+)
 $lines | Set-Content -LiteralPath (Join-Path $work 'SUMMARY.txt') -Encoding UTF8
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 $zip = Join-Path $outPath ($basename + '.zip')
