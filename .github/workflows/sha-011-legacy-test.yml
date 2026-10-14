@@ -43,6 +43,16 @@ jobs:
           $samples|Set-Content -LiteralPath (Join-Path $fake 'CHECKPOINT.ndjson') -Encoding UTF8
           $legacy=Join-Path $package 'IMPORT_LEGACY/L2F_SCAN_REPORTS.zip'
           Compress-Archive -LiteralPath $fake -DestinationPath $legacy
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $archive=[IO.Compression.ZipFile]::Open($legacy,[IO.Compression.ZipArchiveMode]::Update)
+          try {
+            $entry=$archive.CreateEntry('test/CHECKPOINT.ndjson')
+            $copy=$entry.Open()
+            try {
+              $bytes=[IO.File]::ReadAllBytes((Join-Path $fake 'CHECKPOINT.ndjson'))
+              $copy.Write($bytes,0,$bytes.Length)
+            } finally { $copy.Dispose() }
+          } finally { $archive.Dispose() }
           $digest=(Get-FileHash -LiteralPath $legacy -Algorithm SHA256).Hash.ToLowerInvariant()
           $code=Get-Content -LiteralPath $script -Raw
           $code=$code.Replace('931c3f62271be7c7cd23e4e82c2e809358c79a11ed39f89c5354685606e38d85',$digest)
