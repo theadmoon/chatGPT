@@ -1,0 +1,39 @@
+name: L2F SHA packaged acceptance
+on:
+  push:
+    branches: [l2f-quick-inventory-ci]
+  workflow_dispatch:
+jobs:
+  package:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test clean ZIP on Windows PS5.1
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $zip=Join-Path $env:RUNNER_TEMP 'L2F_All_HDD_SHA256.zip'
+          Compress-Archive -LiteralPath sha_inventory/APP,sha_inventory/SCAN_ALL_HDD.cmd,sha_inventory/SOURCES.txt,sha_inventory/README_FIRST.txt -DestinationPath $zip
+          $install=Join-Path $env:RUNNER_TEMP 'clean-install'
+          Expand-Archive -LiteralPath $zip -DestinationPath $install
+          $root1=Join-Path $env:RUNNER_TEMP 'SourceOne'
+          $root2=Join-Path $env:RUNNER_TEMP 'SourceTwo'
+          New-Item -ItemType Directory -Force -Path $root1,$root2 | Out-Null
+          [IO.File]::WriteAllBytes((Join-Path $root1 'a.mp4'),[byte[]](1,2,3))
+          [IO.File]::WriteAllBytes((Join-Path $root2 'b.mov'),[byte[]](4,5))
+          @($root1,$root2) | Set-Content -LiteralPath (Join-Path $install 'SOURCES.txt') -Encoding Ascii
+          & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $install 'APP/RunAll.ps1') -PackageRoot $install
+          if($LASTEXITCODE -ne 0){throw ('FIRST_RUN_FAIL='+$LASTEXITCODE)}
+          & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $install 'APP/RunAll.ps1') -PackageRoot $install
+          if($LASTEXITCODE -ne 0){throw ('SECOND_RUN_FAIL='+$LASTEXITCODE)}
+          $reports=@(Get-ChildItem -LiteralPath (Join-Path $install 'REPORTS') -Recurse -Filter '*.zip')
+          if($reports.Count -ne 4){throw ('REPORT_COUNT='+$reports.Count)}
+          Write-Host 'MULTI_HDD_CLEAN_ZIP_PS51_PASS'
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item -LiteralPath $zip -Destination 'dist/L2F_All_HDD_SHA256.zip'
+      - name: Upload package
+        uses: actions/upload-artifact@v4
+        with:
+          name: L2F_All_HDD_SHA256_0.1.0
+          path: dist/L2F_All_HDD_SHA256.zip
+          if-no-files-found: error
