@@ -1,0 +1,76 @@
+name: L2F SHA 0.1.1 Windows legacy regression
+on:
+  push:
+    branches: [l2f-quick-inventory-ci]
+  workflow_dispatch:
+jobs:
+  regression:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - name: Synthetic SHA and legacy import on native PowerShell 5.1
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $package=Join-Path $env:RUNNER_TEMP 'pkg'
+          $source=Join-Path $env:RUNNER_TEMP 'source'
+          New-Item -ItemType Directory -Force -Path (Join-Path $package 'APP'),(Join-Path $package 'IMPORT_LEGACY'),$source | Out-Null
+          $b64=(Get-Content -LiteralPath 'sha_inventory_011/Scan.ps1.gz.b64' -Raw).Trim()
+          $mem=New-Object IO.MemoryStream(,[Convert]::FromBase64String($b64))
+          $gz=New-Object IO.Compression.GZipStream($mem,[IO.Compression.CompressionMode]::Decompress)
+          $script=Join-Path $package 'APP/Scan.ps1'
+          $dst=[IO.File]::Create($script)
+          try { $gz.CopyTo($dst) } finally { $dst.Dispose();$gz.Dispose();$mem.Dispose() }
+          if((Get-FileHash -LiteralPath $script -Algorithm SHA256).Hash.ToLowerInvariant() -ne 'a86806185f9cb19969afb84b0f2b33305470bcaaef39a1e7b51bb20c51e85389'){throw 'SCRIPT_HASH_MISMATCH'}
+          $samples=New-Object 'System.Collections.Generic.List[string]'
+          $date=[datetime]'2026-10-13T15:00:00Z'
+          for($i=1;$i -le 147;$i++){
+            $name=('legacy_{0:D3}.mp4' -f $i)
+            [byte[]]$bytes=@([byte]$i,[byte]($i%31),[byte]3)
+            $f=Join-Path $source $name
+            [IO.File]::WriteAllBytes($f,$bytes)
+            [IO.File]::SetLastWriteTimeUtc($f,$date)
+            $h=[Security.Cryptography.SHA256]::Create()
+            try{
+              $full=[BitConverter]::ToString($h.ComputeHash($bytes)).Replace('-','').ToLowerInvariant()
+              $guard=[BitConverter]::ToString($h.ComputeHash([byte[]]($bytes+$bytes+$bytes))).Replace('-','').ToLowerInvariant()
+            } finally {$h.Dispose()}
+            $samples.Add((@{relative_path=$name;size_bytes='3';modified_precise_utc=$date.ToString('yyyy-MM-ddTHH:mm:ss.fffffffZ');source_id='SRC-7BBA27ECD6D944C4A41281A8D5D15F40';hash_status='HASH_OK';sha256=$full;sample_guard=$guard}|ConvertTo-Json -Compress))
+          }
+          for($i=1;$i -le 100;$i++){$samples.Add((@{relative_path=('ignored_'+$i+'.txt');hash_status='SKIPPED_NOT_VIDEO';sha256=''}|ConvertTo-Json -Compress))}
+          $fake=Join-Path $env:RUNNER_TEMP 'fake/test'
+          New-Item -ItemType Directory -Force -Path $fake|Out-Null
+          $samples|Set-Content -LiteralPath (Join-Path $fake 'CHECKPOINT.ndjson') -Encoding UTF8
+          $legacy=Join-Path $package 'IMPORT_LEGACY/L2F_SCAN_REPORTS.zip'
+          Compress-Archive -LiteralPath $fake -DestinationPath $legacy
+          $digest=(Get-FileHash -LiteralPath $legacy -Algorithm SHA256).Hash.ToLowerInvariant()
+          $code=Get-Content -LiteralPath $script -Raw
+          $code=$code.Replace('931c3f62271be7c7cd23e4e82c2e809358c79a11ed39f89c5354685606e38d85',$digest)
+          Set-Content -LiteralPath $script -Value $code -Encoding UTF8
+          @{sources=@(@{path=$source;legacy_source='SEAGATE_LD2';expected_volume_label='';expected_total_bytes=0})}|ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $package 'SOURCES.json') -Encoding UTF8
+          [IO.File]::WriteAllBytes((Join-Path $source 'new.mp4'),[byte[]](7,8,9))
+          [IO.File]::WriteAllBytes((Join-Path $source 'partial.yandex_disk_download'),[byte[]](1,2))
+          & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $script -PackageRoot $package
+          if($LASTEXITCODE -ne 0){throw ('FIRST_SCAN_EXIT='+$LASTEXITCODE)}
+          $report=Get-ChildItem -LiteralPath (Join-Path $package 'REPORTS') -Filter '*.zip' | Select-Object -First 1
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $zip=[IO.Compression.ZipFile]::OpenRead($report.FullName)
+          try{
+            $entry=$zip.Entries|Where-Object {$_.Name -eq 'SUMMARY.json'}|Select-Object -First 1
+            $r=New-Object IO.StreamReader($entry.Open())
+            try{$s=$r.ReadToEnd()|ConvertFrom-Json}finally{$r.Dispose()}
+            if($s.counts.legacy_reused -ne 147 -or $s.counts.full_hash -ne 2 -or $s.counts.hash_errors -ne 0){throw ('WRONG_LEGACY_COUNTS '+($s|ConvertTo-Json -Depth 5))}
+          }finally{$zip.Dispose()}
+          Write-Host 'LEGACY_247_147_SAMPLE_REUSE_PASS'
+          & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $script -PackageRoot $package
+          if($LASTEXITCODE -ne 0){throw ('SECOND_SCAN_EXIT='+$LASTEXITCODE)}
+          $report=Get-ChildItem -LiteralPath (Join-Path $package 'REPORTS') -Filter '*.zip' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+          $zip=[IO.Compression.ZipFile]::OpenRead($report.FullName)
+          try{
+            $entry=$zip.Entries|Where-Object {$_.Name -eq 'SUMMARY.json'}|Select-Object -First 1
+            $r=New-Object IO.StreamReader($entry.Open())
+            try{$s=$r.ReadToEnd()|ConvertFrom-Json}finally{$r.Dispose()}
+            if($s.counts.cache_reused -ne 149 -or $s.counts.full_hash -ne 0 -or $s.counts.hash_errors -ne 0){throw ('WRONG_CACHE_COUNTS '+($s|ConvertTo-Json -Depth 5))}
+          }finally{$zip.Dispose()}
+          Write-Host 'CACHE_RESUME_149_PASS'
+          Write-Host 'L2F_SHA_011_WINDOWS_ACCEPTANCE_PASS'
