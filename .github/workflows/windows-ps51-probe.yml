@@ -1,0 +1,52 @@
+name: Windows PowerShell 5.1 execution probe
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  prove-windows-ps51:
+    runs-on: windows-2022
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: powershell
+    steps:
+      - name: Verify native Windows PowerShell 5.1 and write evidence
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $v = $PSVersionTable.PSVersion
+          $os = Get-CimInstance Win32_OperatingSystem
+          Write-Host ('PSVersion=' + $v.ToString())
+          Write-Host ('PSEdition=' + $PSVersionTable.PSEdition)
+          Write-Host ('OS=' + $os.Caption)
+          Write-Host ('Runner.OS=' + $env:RUNNER_OS)
+          Write-Host ('RUN_ID=' + $env:GITHUB_RUN_ID)
+          Write-Host ('RUN_ATTEMPT=' + $env:GITHUB_RUN_ATTEMPT)
+          if ($env:RUNNER_OS -ne 'Windows') { throw 'NOT_WINDOWS' }
+          if ($v.Major -ne 5 -or $v.Minor -ne 1 -or $PSVersionTable.PSEdition -ne 'Desktop') { throw 'NOT_WINDOWS_POWERSHELL_5_1' }
+          New-Item -ItemType Directory -Force -Path 'evidence' | Out-Null
+          $e = [ordered]@{
+            status = 'PASS'
+            test = 'NATIVE_WINDOWS_POWERSHELL_5_1'
+            ps_version = $v.ToString()
+            ps_edition = $PSVersionTable.PSEdition
+            os = $os.Caption
+            runner_os = $env:RUNNER_OS
+            run_id = $env:GITHUB_RUN_ID
+            run_attempt = $env:GITHUB_RUN_ATTEMPT
+            timestamp_utc = (Get-Date).ToUniversalTime().ToString('o')
+          }
+          $e | ConvertTo-Json | Set-Content -LiteralPath 'evidence/windows-ps51-probe.json' -Encoding UTF8
+          Get-FileHash -Algorithm SHA256 -LiteralPath 'evidence/windows-ps51-probe.json' | Format-List | Out-String | Write-Host
+
+      - name: Upload probe evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-ps51-probe-evidence
+          path: evidence/windows-ps51-probe.json
+          if-no-files-found: error
