@@ -33,7 +33,18 @@ if ([IO.File]::Exists($cacheFile)) {
     foreach ($cacheLine in [IO.File]::ReadLines($cacheFile)) {
         try {
             $item = $cacheLine | ConvertFrom-Json -ErrorAction Stop
-            if ($item.path -and $item.sha256 -match '^[a-f0-9]{64}'.mp4','.mov','.mkv','.avi','.m4v','.wmv','.mpg','.mpeg','.ts','.mts','.m2ts','.webm','.flv','.vob','.3gp')
+            if ($item.path -and $item.sha256 -match '^[a-f0-9]{64}$' -and ($null -ne $item.size_bytes) -and ($null -ne $item.mtime_ticks)) {
+                $cache[[string]$item.path] = $item
+            }
+        } catch { }
+    }
+}
+$writerStream = New-Object IO.FileStream($cacheFile,[IO.FileMode]::Append,[IO.FileAccess]::Write,[IO.FileShare]::Read)
+$journalWriter = New-Object IO.StreamWriter($writerStream,(New-Object System.Text.UTF8Encoding($false)))
+$journalWriter.AutoFlush = $true
+$hashFresh=0
+$hashReused=0
+$videoExt = @('.mp4','.mov','.mkv','.avi','.m4v','.wmv','.mpg','.mpeg','.ts','.mts','.m2ts','.webm','.flv','.vob','.3gp')
 $imageExt = @('.jpg','.jpeg','.png','.gif','.webp','.bmp','.tif','.tiff','.heic','.psd')
 $partialExt = @('.yandex_disk_download','.part','.partial','.crdownload','.tmpdownload')
 $all = New-Object 'System.Collections.Generic.List[object]'
