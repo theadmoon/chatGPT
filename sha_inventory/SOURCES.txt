@@ -1,0 +1,4 @@
+# One absolute folder per line. Edit drive letters if Windows assigns other letters.
+E:\LD2_5Tb
+G:\L2F_Video_Backup
+# C:\Third_HDD\Films
