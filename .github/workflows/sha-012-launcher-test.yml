@@ -1,0 +1,42 @@
+name: L2F SHA 0.1.2 launcher Windows regression
+on:
+  push:
+    branches: [l2f-quick-inventory-ci]
+  workflow_dispatch:
+jobs:
+  launcher:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify launcher under directory with spaces on WinPS 5.1
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $pkg=Join-Path $env:RUNNER_TEMP 'L2F Seagate SHA Inventory 0.1.2'
+          $app=Join-Path $pkg 'APP'
+          $source=Join-Path $env:RUNNER_TEMP 'Video source with spaces'
+          New-Item -ItemType Directory -Force -Path $app,$source|Out-Null
+          Copy-Item -LiteralPath 'sha_inventory_011/SCAN_SEAGATE.cmd' -Destination (Join-Path $pkg 'SCAN_SEAGATE.cmd')
+          $enc=(Get-Content -LiteralPath 'sha_inventory_011/Scan.ps1.gz.b64' -Raw).Trim()
+          $mem=New-Object IO.MemoryStream(,[Convert]::FromBase64String($enc))
+          $zipstream=New-Object IO.Compression.GZipStream($mem,[IO.Compression.CompressionMode]::Decompress)
+          $scanner=Join-Path $app 'Scan.ps1'
+          $writer=[IO.File]::Create($scanner)
+          try{$zipstream.CopyTo($writer)}finally{$writer.Dispose();$zipstream.Dispose();$mem.Dispose()}
+          if((Get-FileHash -LiteralPath $scanner -Algorithm SHA256).Hash.ToLowerInvariant() -ne 'a86806185f9cb19969afb84b0f2b33305470bcaaef39a1e7b51bb20c51e85389'){throw 'SCANNER_SOURCE_CHANGED'}
+          [IO.File]::WriteAllBytes((Join-Path $source 'small.mp4'),[byte[]](1,2,3))
+          @{sources=@(@{path=$source;legacy_source='';expected_volume_label='';expected_total_bytes=0})}|ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $pkg 'SOURCES.json') -Encoding UTF8
+          $launcher=Join-Path $pkg 'SCAN_SEAGATE.cmd'
+          & cmd.exe /d /c ('echo.|call "' + $launcher + '"')
+          if($LASTEXITCODE -ne 0){throw ('FIRST_LAUNCH_EXIT='+$LASTEXITCODE)}
+          $cache=Join-Path $pkg 'STATE/SHA_CACHE.jsonl'
+          if(-not (Test-Path -LiteralPath $cache)){throw 'NO_PERSISTENT_CACHE'}
+          $records=@(Get-Content -LiteralPath $cache)
+          if($records.Count -ne 1){throw ('EXPECTED_ONE_HASH='+$records.Count)}
+          & cmd.exe /d /c ('echo.|call "' + $launcher + '"')
+          if($LASTEXITCODE -ne 0){throw ('SECOND_LAUNCH_EXIT='+$LASTEXITCODE)}
+          $records=@(Get-Content -LiteralPath $cache)
+          if($records.Count -ne 1){throw ('REDUNDANT_REHASH='+$records.Count)}
+          $reports=@(Get-ChildItem -LiteralPath (Join-Path $pkg 'REPORTS') -Filter 'L2F_SHA_*.zip')
+          if($reports.Count -ne 2){throw ('REPORT_COUNT='+$reports.Count)}
+          Write-Host 'LAUNCHER_0_1_2_WINDOWS_PS51_PASS'
