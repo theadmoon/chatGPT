@@ -1,0 +1,80 @@
+name: L2F Vera Video SHA clean-ZIP Windows acceptance
+on:
+  push:
+    branches: [l2f-vera-quick-inventory]
+  workflow_dispatch:
+jobs:
+  video-sha:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - name: Clean installer ZIP and synthetic SHA checks on PowerShell 5.1
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          if($PSVersionTable.PSVersion.Major -ne 5 -or $PSVersionTable.PSEdition -ne 'Desktop'){throw 'NOT_NATIVE_WINDOWS_PS51'}
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          $stage=Join-Path $env:RUNNER_TEMP 'vera-sha-package'
+          $app=Join-Path $stage 'APP'
+          New-Item -ItemType Directory -Force -Path $app | Out-Null
+          Copy-Item -LiteralPath 'vera_sha_010/APP/Scan.ps1' -Destination (Join-Path $app 'Scan.ps1')
+          Copy-Item -LiteralPath 'vera_sha_010/APP/Run.ps1' -Destination (Join-Path $app 'Run.ps1')
+          foreach($fn in @('SCAN_VERA_SHA.cmd','SOURCE_ROOT.txt','README_FIRST.txt')){
+            Copy-Item -LiteralPath (Join-Path 'vera_sha_010' $fn) -Destination (Join-Path $stage $fn)
+          }
+          $package=Join-Path (Resolve-Path dist).Path 'L2F_Vera_Video_SHA_Inventory_0.1.0.zip'
+          Compress-Archive -Path (Join-Path $stage '*') -DestinationPath $package
+          $install=Join-Path $env:RUNNER_TEMP 'Vera SHA clean install with spaces'
+          Expand-Archive -LiteralPath $package -DestinationPath $install
+          $src=Join-Path $env:RUNNER_TEMP 'Synthetic Yandex D'
+          New-Item -ItemType Directory -Force -Path $src,(Join-Path $src 'nested') | Out-Null
+          [IO.File]::WriteAllBytes((Join-Path $src 'a.mp4'),[byte[]](1,2,3))
+          [IO.File]::WriteAllBytes((Join-Path $src 'nested/b.MOV'),[byte[]](4,5,6))
+          [IO.File]::WriteAllBytes((Join-Path $src 'pending.mp4.yandex_disk_download'),[byte[]](7,8,9))
+          [IO.File]::WriteAllBytes((Join-Path $src 'photo.jpg'),[byte[]](5))
+          $past=[DateTime]::UtcNow.AddHours(-2)
+          [IO.File]::SetLastWriteTimeUtc((Join-Path $src 'a.mp4'),$past)
+          [IO.File]::SetLastWriteTimeUtc((Join-Path $src 'nested/b.MOV'),$past)
+          Set-Content -LiteralPath (Join-Path $install 'SOURCE_ROOT.txt') -Value $src -Encoding Ascii
+          $launcher=Join-Path $install 'SCAN_VERA_SHA.cmd'
+          & cmd.exe /d /c ('echo.|call "' + $launcher + '"')
+          if($LASTEXITCODE -ne 0){throw ('FIRST_LAUNCH_EXIT='+$LASTEXITCODE)}
+          $reports=@(Get-ChildItem -LiteralPath (Join-Path $install 'REPORTS') -Filter '*.zip')
+          if($reports.Count -ne 1){throw ('FIRST_REPORT_COUNT='+$reports.Count)}
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $archive=[IO.Compression.ZipFile]::OpenRead($reports[0].FullName)
+          try{
+            $entry=$archive.Entries | Where-Object {$_.Name -eq 'SUMMARY.json'} | Select-Object -First 1
+            $reader=New-Object IO.StreamReader($entry.Open())
+            try{$summary=$reader.ReadToEnd()|ConvertFrom-Json}finally{$reader.Dispose()}
+            if($summary.status -ne 'COMPLETE' -or $summary.sha_fresh -ne 2 -or $summary.sha_available -ne 2 -or $summary.counts.video_files -ne 2 -or $summary.counts.partial_downloads -ne 1 -or $summary.counts.image_files -ne 1 -or $summary.counts.metadata_errors -ne 0){throw ('BAD_FIRST='+($summary|ConvertTo-Json -Depth 5))}
+            $csvEntry=$archive.Entries|Where-Object {$_.Name -eq 'FILES.csv'}|Select-Object -First 1
+            $reader=New-Object IO.StreamReader($csvEntry.Open())
+            try{$rows=@($reader.ReadToEnd()|ConvertFrom-Csv)}finally{$reader.Dispose()}
+            if(@($rows|Where-Object {$_.category -eq 'VIDEO' -and $_.sha256 -match '^[0-9a-f]{64}$'}).Count -ne 2){throw 'VIDEO_HASH_COUNT_WRONG'}
+            if(@($rows|Where-Object {$_.category -ne 'VIDEO' -and $_.sha256}).Count -ne 0){throw 'HASHED_NONVIDEO_OR_PARTIAL'}
+          }finally{$archive.Dispose()}
+          Write-Host 'TWO_VIDEOS_SHA_PARTIAL_SKIPPED_PASS'
+          & cmd.exe /d /c ('echo.|call "' + $launcher + '"')
+          if($LASTEXITCODE -ne 0){throw ('SECOND_LAUNCH_EXIT='+$LASTEXITCODE)}
+          $reports=@(Get-ChildItem -LiteralPath (Join-Path $install 'REPORTS') -Filter '*.zip')
+          if($reports.Count -ne 2){throw 'SECOND_REPORT_MISSING'}
+          $latest=$reports|Sort-Object LastWriteTime -Descending|Select-Object -First 1
+          $archive=[IO.Compression.ZipFile]::OpenRead($latest.FullName)
+          try{
+            $entry=$archive.Entries|Where-Object {$_.Name -eq 'SUMMARY.json'}|Select-Object -First 1
+            $reader=New-Object IO.StreamReader($entry.Open())
+            try{$summary=$reader.ReadToEnd()|ConvertFrom-Json}finally{$reader.Dispose()}
+            if($summary.sha_fresh -ne 0 -or $summary.sha_reused -ne 2 -or $summary.sha_available -ne 2){throw ('CACHE_REUSE_FAILED='+($summary|ConvertTo-Json -Depth 5))}
+          }finally{$archive.Dispose()}
+          Write-Host 'SECOND_RUN_CACHED_SHA_PASS'
+          $recs=@(Get-Content -LiteralPath (Join-Path $install 'STATE/SHA_CACHE.jsonl'))
+          if($recs.Count -ne 2){throw ('BAD_JOURNAL_COUNT='+$recs.Count)}
+          Write-Host 'ONE_CLICK_CLEAN_ZIP_VERA_SHA_WINDOWS_PS51_PASS'
+      - name: Upload verified install ZIP
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: L2F_Vera_Video_SHA_Inventory_0.1.0
+          path: dist/L2F_Vera_Video_SHA_Inventory_0.1.0.zip
+          if-no-files-found: error
