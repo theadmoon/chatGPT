@@ -23,7 +23,7 @@ jobs:
           }
           New-Item -ItemType Directory -Force -Path dist | Out-Null
           $zip = Join-Path (Resolve-Path dist).Path 'L2F_Vera_Quick_Inventory_0.1.0.zip'
-          Compress-Archive -LiteralPath (Join-Path $staging '*') -DestinationPath $zip
+          Compress-Archive -Path (Join-Path $staging '*') -DestinationPath $zip
           $install=Join-Path $env:RUNNER_TEMP 'Vera installation folder with spaces'
           Expand-Archive -LiteralPath $zip -DestinationPath $install
           if(-not (Test-Path -LiteralPath (Join-Path $install 'SCAN_VERA_D.cmd'))) { throw 'LAUNCHER_MISSING' }
