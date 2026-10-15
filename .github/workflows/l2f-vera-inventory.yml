@@ -1,0 +1,61 @@
+name: L2F Vera one-click inventory Windows acceptance
+on:
+  push:
+    branches: [l2f-vera-quick-inventory]
+  workflow_dispatch:
+jobs:
+  vera-inventory:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build clean ZIP then test the actual cmd launcher on Windows PowerShell 5.1
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if($PSVersionTable.PSVersion.Major -ne 5 -or $PSVersionTable.PSVersion.Minor -ne 1 -or $PSVersionTable.PSEdition -ne 'Desktop'){ throw 'WINDOWS_PS51_REQUIRED' }
+          $staging = Join-Path $env:RUNNER_TEMP 'vera-stage'
+          $app = Join-Path $staging 'APP'
+          New-Item -ItemType Directory -Force -Path $app | Out-Null
+          Copy-Item -LiteralPath 'quick_inventory/APP/Inventory.ps1' -Destination (Join-Path $app 'Inventory.ps1')
+          Copy-Item -LiteralPath 'vera_inventory/APP/Run.ps1' -Destination (Join-Path $app 'Run.ps1')
+          foreach($name in @('SCAN_VERA_D.cmd','SOURCE_ROOT.txt','README_FIRST.txt')){
+            Copy-Item -LiteralPath (Join-Path 'vera_inventory' $name) -Destination (Join-Path $staging $name)
+          }
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          $zip = Join-Path (Resolve-Path dist).Path 'L2F_Vera_Quick_Inventory_0.1.0.zip'
+          Compress-Archive -LiteralPath (Join-Path $staging '*') -DestinationPath $zip
+          $install=Join-Path $env:RUNNER_TEMP 'Vera installation folder with spaces'
+          Expand-Archive -LiteralPath $zip -DestinationPath $install
+          if(-not (Test-Path -LiteralPath (Join-Path $install 'SCAN_VERA_D.cmd'))) { throw 'LAUNCHER_MISSING' }
+          $source=Join-Path $env:RUNNER_TEMP 'Yandex download source'
+          New-Item -ItemType Directory -Force -Path (Join-Path $source '00_old_SKU') | Out-Null
+          [IO.File]::WriteAllBytes((Join-Path $source 'First.mp4'),[byte[]](1,2,3))
+          [IO.File]::WriteAllBytes((Join-Path $source '00_old_SKU/Second.MP4'),[byte[]](4,5))
+          [IO.File]::WriteAllBytes((Join-Path $source 'pending.mp4.yandex_disk_download'),[byte[]](6))
+          [IO.File]::WriteAllBytes((Join-Path $source 'photo.jpg'),[byte[]](7))
+          [IO.File]::WriteAllBytes((Join-Path $source 'notes.txt'),[byte[]](8))
+          Set-Content -LiteralPath (Join-Path $install 'SOURCE_ROOT.txt') -Value $source -Encoding Ascii
+          $launcher = Join-Path $install 'SCAN_VERA_D.cmd'
+          & cmd.exe /d /c ('echo.|call "' + $launcher + '"')
+          if($LASTEXITCODE -ne 0){throw ('LAUNCH_FAILED=' + $LASTEXITCODE)}
+          $reports=@(Get-ChildItem -LiteralPath (Join-Path $install 'REPORTS') -Filter 'L2F_INVENTORY_*.zip')
+          if($reports.Count -ne 1){throw ('REPORT_COUNT=' + $reports.Count)}
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $z=[IO.Compression.ZipFile]::OpenRead($reports[0].FullName)
+          try {
+            $entry = $z.Entries|Where-Object {$_.Name -eq 'SUMMARY.json'}|Select-Object -First 1
+            if(-not $entry){throw 'MISSING_SUMMARY'}
+            $reader=New-Object IO.StreamReader($entry.Open())
+            try{$summary=$reader.ReadToEnd()|ConvertFrom-Json}finally{$reader.Dispose()}
+            $c=$summary.counts
+            if($summary.status -ne 'COMPLETE' -or $c.files_total -ne 5 -or $c.video_files -ne 2 -or $c.partial_downloads -ne 1 -or $c.image_files -ne 1 -or $c.other_files -ne 1 -or $c.subdirectories -ne 1 -or $c.metadata_errors -ne 0 -or $summary.sha256_computed){ throw ('COUNTS_MISMATCH: '+($summary|ConvertTo-Json -Depth 6))}
+            if(-not ($z.Entries|Where-Object {$_.Name -eq 'FILES.csv'})){throw 'FILES_CSV_MISSING'}
+          }finally{$z.Dispose()}
+          Get-FileHash -LiteralPath $zip -Algorithm SHA256 | Format-List | Out-String | Write-Host
+          Write-Host 'VERA_ONE_CLICK_CLEAN_ZIP_WINDOWS_PS51_PASS'
+      - name: Publish verified installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: L2F_Vera_Quick_Inventory_0.1.0
+          path: dist/L2F_Vera_Quick_Inventory_0.1.0.zip
+          if-no-files-found: error
