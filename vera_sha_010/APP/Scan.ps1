@@ -130,7 +130,8 @@ while ($dirs.Count -gt 0) {
                         }
                     }
                 }
-                if ($digest -match '^[0-9a-f]{64}
+                if ($digest -match '^[0-9a-f]{64}$') { $videoShaAvailable++ }
+            }
             if ($hashError) {
                 $errs.Add([pscustomobject]@{path=$path;stage=$hashStatus;error=$hashError})
             }
@@ -219,98 +220,6 @@ Write-Output ($lines -join [Environment]::NewLine)
 Write-Output ('REPORT_ZIP=' + $zip)
 Write-Output ('EXIT_CODE=' + $(if ($errs.Count -eq 0 -and $recentDeferred -eq 0) {0} else {4}))
 if ($errs.Count -gt 0 -or $recentDeferred -gt 0) { exit 4 }
-exit 0
-}
-finally {
-    if ($null -ne $journalWriter) { $journalWriter.Dispose() }
-    $runLock.Dispose()
-}
-) { $videoShaAvailable++ }
-            }
-            if ($hashError) {
-                $errs.Add([pscustomobject]@{path=$path;stage=$hashStatus;error=$hashError})
-            }
-
-            $all.Add([pscustomobject]@{
-                relative_path=$rel
-                file_name=$fi.Name
-                extension=$ext
-                category=$category
-                size_bytes=[long]$fi.Length
-                last_write_utc=$fi.LastWriteTimeUtc.ToString('o')
-                sha256=$digest
-                sha_status=$hashStatus
-                sha_error=$hashError
-            })
-            $sizeTotal += [long]$fi.Length
-            $counts[$category]++
-            if (($all.Count % 20) -eq 0) { Write-Output ("PROGRESS_FILES=" + $all.Count + "; HASHED=" + $hashFresh + "; REUSED=" + $hashReused) }
-        }
-        catch { $errs.Add([pscustomobject]@{path=$path; stage='READ_FILE_METADATA'; error=$_.Exception.Message}) }
-    }
-}
-
-[System.IO.Directory]::CreateDirectory($outPath) | Out-Null
-$stamp = [DateTime]::UtcNow.ToString('yyyyMMddTHHmmssZ')
-$runId = [guid]::NewGuid().ToString('N').Substring(0,8)
-$basename = 'L2F_INVENTORY_' + $stamp + '_' + $runId
-$work = Join-Path $outPath ($basename + '_files')
-[System.IO.Directory]::CreateDirectory($work) | Out-Null
-$csv = Join-Path $work 'FILES.csv'
-if ($all.Count -gt 0) { $all | Export-Csv -LiteralPath $csv -Encoding UTF8 -NoTypeInformation }
-else { '"relative_path","file_name","extension","category","size_bytes","last_write_utc","sha256","sha_status","sha_error"' | Set-Content -LiteralPath $csv -Encoding UTF8 }
-$errCsv = Join-Path $work 'ERRORS.csv'
-if ($errs.Count -gt 0) { $errs | Export-Csv -LiteralPath $errCsv -Encoding UTF8 -NoTypeInformation }
-else { '"path","stage","error"' | Set-Content -LiteralPath $errCsv -Encoding UTF8 }
-$status = if ($errs.Count -eq 0) { 'COMPLETE' } else { 'COMPLETE_WITH_ERRORS' }
-$report = [ordered]@{
-    schema = 'L2F_QUICK_FILE_INVENTORY_1'
-    status = $status
-    scan_root = $rootPath
-    timestamp_utc = [DateTime]::UtcNow.ToString('o')
-    counts = [ordered]@{
-        files_total=$all.Count
-        video_files=$counts.VIDEO
-        image_files=$counts.IMAGE
-        partial_downloads=$counts.PARTIAL
-        other_files=$counts.OTHER
-        subdirectories=$dirCount
-        metadata_errors=$errs.Count
-    }
-    total_file_bytes=$sizeTotal
-    sha256_computed=$true
-    sha_fresh=$hashFresh
-    sha_reused=$hashReused
-    sha_available=($hashFresh+$hashReused)
-    notes='Full SHA-256 each file. Cached results reuse unchanged path+size+mtime; intentionally no content re-read on reuse. Changed files during scanning are not accepted. Do not treat incomplete download SHA as final asset hash.'
-}
-$report | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $work 'SUMMARY.json') -Encoding UTF8
-$lines = @(
-    'L2F Quick Inventory'
-    ('STATUS=' + $status)
-    ('SOURCE=' + $rootPath)
-    ('FILES_TOTAL=' + $all.Count)
-    ('VIDEOS=' + $counts.VIDEO)
-    ('IMAGES=' + $counts.IMAGE)
-    ('PARTIAL=' + $counts.PARTIAL)
-    ('OTHER=' + $counts.OTHER)
-    ('SUBDIRECTORIES=' + $dirCount)
-    ('ERRORS=' + $errs.Count)
-    ('BYTES=' + $sizeTotal)
-    ('SHA_AVAILABLE=' + ($hashFresh+$hashReused))
-    ('SHA_FRESH=' + $hashFresh)
-    ('SHA_REUSED=' + $hashReused)
-    'SOURCE_READ_ONLY'
-)
-$lines | Set-Content -LiteralPath (Join-Path $work 'SUMMARY.txt') -Encoding UTF8
-Add-Type -AssemblyName System.IO.Compression.FileSystem
-$zip = Join-Path $outPath ($basename + '.zip')
-[System.IO.Compression.ZipFile]::CreateFromDirectory($work, $zip)
-if (-not [System.IO.File]::Exists($zip) -or (Get-Item -LiteralPath $zip).Length -le 0) { throw 'REPORT_ZIP_NOT_CREATED' }
-Write-Output ($lines -join [Environment]::NewLine)
-Write-Output ('REPORT_ZIP=' + $zip)
-Write-Output ('EXIT_CODE=' + $(if ($errs.Count -eq 0) {0} else {4}))
-if ($errs.Count -gt 0) { exit 4 }
 exit 0
 }
 finally {
